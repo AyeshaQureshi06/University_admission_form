@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from 'react';
-import { useForm } from 'react-hook-form';
+import { FieldErrors, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { applicationSchema, ApplicationData } from '@/lib/validations';
 import { StepIndicator } from '@/components/apply/StepIndicator';
@@ -17,14 +17,58 @@ import { useRouter } from 'next/navigation';
 import { generateAppId } from '@/lib/generate-app-id';
 import { GraduationCap, Camera, Upload, ArrowRight, ArrowLeft } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { getSupabaseClient } from '@/lib/supabase-client';
 
 const TOTAL_STEPS = 5;
+const REQUIRED_DOCUMENTS = [
+  { key: 'cnic_copy', label: 'CNIC / Form-B Copy' },
+  { key: 'latest_cert', label: 'Latest Academic Certificate' },
+] as const;
+const MAX_PHOTO_SIZE = 2 * 1024 * 1024;
+const MAX_DOCUMENT_SIZE = 5 * 1024 * 1024;
+const FIELD_STEP_MAP: Partial<Record<keyof ApplicationData, number>> = {
+  first_name: 0,
+  last_name: 0,
+  father_name: 0,
+  cnic: 0,
+  date_of_birth: 0,
+  gender: 0,
+  email: 0,
+  phone: 0,
+  address: 0,
+  city: 0,
+  qualification: 1,
+  board_institute: 1,
+  passing_year: 1,
+  obtained_marks: 1,
+  percentage: 1,
+  result_status: 1,
+  roll_number: 1,
+  faculty: 2,
+  program: 2,
+  study_mode: 2,
+  admission_type: 2,
+  selected_subjects: 2,
+  emergency_contact_name: 2,
+  emergency_contact_phone: 2,
+  document_urls: 3,
+  signature_name: 4,
+  signature_date: 4,
+  declaration_agreed: 4,
+};
 
 export default function ApplyPage() {
   const [step, setStep] = useState(0);
   const { toast } = useToast();
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
+  const [submitMessage, setSubmitMessage] = useState<string>('');
+  const [submitError, setSubmitError] = useState(false);
+  const [passportPhoto, setPassportPhoto] = useState<File | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<Record<string, File | null>>({
+    cnic_copy: null,
+    latest_cert: null,
+  });
 
   const form = useForm<ApplicationData>({
     resolver: zodResolver(applicationSchema),
@@ -33,7 +77,9 @@ export default function ApplyPage() {
       result_status: 'Pass',
       study_mode: 'Morning',
       admission_type: 'Regular',
-      selected_subjects: [],
+      selected_subjects: ['General'],
+      city: 'N/A',
+      document_urls: [],
       declaration_agreed: false,
     }
   });
@@ -48,6 +94,13 @@ export default function ApplyPage() {
       Object.keys(data).forEach((key) => {
         setValue(key as any, data[key]);
       });
+
+      const savedSubjects = Array.isArray(data.selected_subjects) ? data.selected_subjects : [];
+      if (savedSubjects.length === 0) {
+        setValue('selected_subjects', ['General']);
+      }
+    } else {
+      setValue('selected_subjects', ['General']);
     }
   }, [setValue]);
 
@@ -58,18 +111,124 @@ export default function ApplyPage() {
     return () => subscription.unsubscribe();
   }, [watch]);
 
+  const handleDocumentChange = (key: string, file: File | null) => {
+    if (file && file.size > MAX_DOCUMENT_SIZE) {
+      toast({
+        title: 'File too large',
+        description: 'Document must be 5MB or smaller.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setSelectedFiles((prev) => ({ ...prev, [key]: file }));
+  };
+
   const onSubmit = async (data: ApplicationData) => {
     setIsLoading(true);
+    setSubmitError(false);
+    setSubmitMessage('Submitting application...');
     try {
-      // Mock API call
-      await new Promise(resolve => setTimeout(resolve, 2000));
       const appId = generateAppId();
+
+      if (!passportPhoto) {
+        toast({
+          title: 'Passport photo required',
+          description: 'Please upload passport size photo on step 1.',
+          variant: 'destructive',
+        });
+        setSubmitError(true);
+        setSubmitMessage('Submission blocked: passport photo is required.');
+        setStep(0);
+        return;
+      }
+
+      const filesToUpload = REQUIRED_DOCUMENTS.map((doc) => selectedFiles[doc.key]).filter(
+        (file): file is File => Boolean(file)
+      );
+
+      if (filesToUpload.length !== 2) {
+        toast({
+          title: '2 documents required',
+          description: 'Please upload exactly 2 documents before submitting.',
+          variant: 'destructive',
+        });
+        setSubmitError(true);
+        setSubmitMessage('Submission blocked: exactly 2 documents are required.');
+        setStep(3);
+        return;
+      }
+
+      const bucket = process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET || 'admission-documents';
+      const table = process.env.NEXT_PUBLIC_SUPABASE_APPLICATIONS_TABLE || 'applications';
+      const supabase = getSupabaseClient();
+
+      if (!supabase) {
+        throw new Error('Supabase is not configured. Please set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in .env.local.');
+      }
+
+      setSubmitMessage(`Uploading files to bucket: ${bucket}`);
+
+      const photoExtension = passportPhoto.name.split('.').pop() || 'jpg';
+      const photoPath = `${appId}/passport-photo-${Date.now()}.${photoExtension}`;
+
+      const { error: photoUploadError } = await supabase.storage.from(bucket).upload(photoPath, passportPhoto, {
+        upsert: false,
+      });
+
+      if (photoUploadError) {
+        throw new Error(`Passport photo upload failed: ${photoUploadError.message}`);
+      }
+
+      const { data: photoUrlData } = supabase.storage.from(bucket).getPublicUrl(photoPath);
+
+      const uploadedUrls: string[] = [];
+
+      for (let index = 0; index < REQUIRED_DOCUMENTS.length; index += 1) {
+        const documentType = REQUIRED_DOCUMENTS[index];
+        const file = filesToUpload[index];
+        const fileExtension = file.name.split('.').pop() || 'dat';
+        const filePath = `${appId}/${documentType.key}-${Date.now()}.${fileExtension}`;
+
+        const { error: uploadError } = await supabase.storage.from(bucket).upload(filePath, file, {
+          upsert: false,
+        });
+
+        if (uploadError) {
+          throw new Error(uploadError.message);
+        }
+
+        const { data: publicUrlData } = supabase.storage.from(bucket).getPublicUrl(filePath);
+        uploadedUrls.push(publicUrlData.publicUrl);
+      }
+
+      const payload = {
+        ...data,
+        application_id: appId,
+        photo_url: photoUrlData.publicUrl,
+        document_urls: uploadedUrls,
+        created_at: new Date().toISOString(),
+      };
+
+      setSubmitMessage(`Saving application in table: ${table}`);
+      const { error: insertError } = await supabase.from(table).insert(payload);
+
+      if (insertError) {
+        throw new Error(insertError.message);
+      }
+
       localStorage.removeItem('verdant_application_draft');
+      setSubmitError(false);
+      setSubmitMessage(`Submitted successfully. Application ID: ${appId}`);
       router.push(`/apply/success?id=${appId}`);
     } catch (error) {
+      const message = error instanceof Error ? error.message : 'Please try again later.';
+      setSubmitError(true);
+      setSubmitMessage(`Submit failed: ${message}`);
+      console.error('Application submit failed:', error);
       toast({
         title: "Error submitting application",
-        description: "Please try again later.",
+        description: message,
         variant: "destructive"
       });
     } finally {
@@ -77,8 +236,40 @@ export default function ApplyPage() {
     }
   };
 
+  const onInvalidSubmit = (formErrors: FieldErrors<ApplicationData>) => {
+    const firstErrorField = Object.keys(formErrors)[0] as keyof ApplicationData | undefined;
+
+    if (firstErrorField) {
+      const targetStep = FIELD_STEP_MAP[firstErrorField] ?? 0;
+      const rawMessage = formErrors[firstErrorField]?.message;
+      const message = typeof rawMessage === 'string' ? rawMessage : 'Please complete all required fields.';
+
+      setStep(targetStep);
+      setSubmitError(true);
+      setSubmitMessage(`Submission blocked: ${message}`);
+      toast({
+        title: 'Form incomplete',
+        description: message,
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setSubmitError(true);
+    setSubmitMessage('Submission blocked: please complete all required fields.');
+    toast({
+      title: 'Form incomplete',
+      description: 'Please complete all required fields.',
+      variant: 'destructive',
+    });
+  };
+
   const nextStep = () => {
     // In a real app, validate only current step fields here
+    const subjects = watch('selected_subjects');
+    if (!subjects || subjects.length === 0) {
+      setValue('selected_subjects', ['General']);
+    }
     setStep(s => Math.min(s + 1, TOTAL_STEPS - 1));
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -94,13 +285,36 @@ export default function ApplyPage() {
         return (
           <div className="space-y-8 animate-in slide-in-from-right duration-500">
             <div className="flex flex-col items-center gap-4 mb-8">
-              <div className="relative w-32 h-32 rounded-full border-2 border-dashed border-primary flex items-center justify-center group cursor-pointer overflow-hidden">
+              <Input
+                id="passport-photo"
+                type="file"
+                accept=".jpg,.jpeg,.png"
+                className="hidden"
+                onChange={(event) => {
+                  const file = event.target.files?.[0] ?? null;
+                  if (file && file.size > MAX_PHOTO_SIZE) {
+                    toast({
+                      title: 'Photo too large',
+                      description: 'Passport photo must be 2MB or smaller.',
+                      variant: 'destructive',
+                    });
+                    return;
+                  }
+                  setPassportPhoto(file);
+                }}
+              />
+              <div
+                className="relative w-32 h-32 rounded-full border-2 border-dashed border-primary flex items-center justify-center group cursor-pointer overflow-hidden"
+                onClick={() => document.getElementById('passport-photo')?.click()}
+              >
                 <Camera className="w-8 h-8 text-primary group-hover:scale-110 transition-transform" />
                 <div className="absolute inset-0 bg-black/5 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                   <span className="text-[10px] text-white bg-primary px-2 py-1 rounded">Upload Photo</span>
                 </div>
               </div>
-              <p className="text-sm text-muted-foreground">Passport size photograph (Max 2MB)</p>
+              <p className="text-sm text-muted-foreground">
+                {passportPhoto?.name ?? 'Passport size photograph (Max 2MB)'}
+              </p>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
@@ -292,27 +506,40 @@ export default function ApplyPage() {
           <div className="space-y-8 animate-in slide-in-from-right duration-500">
             <h3 className="text-2xl font-headline text-primary border-b border-primary/20 pb-2">Document Uploads</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {[
-                { key: 'cnic_copy', label: 'CNIC / Form-B Copy' },
-                { key: 'matric_cert', label: 'Matric Certificate' },
-                { key: 'inter_cert', label: 'Intermediate Certificate' },
-                { key: 'domicile', label: 'Domicile Certificate' },
-                { key: 'photos', label: 'Passport Photographs' },
-                { key: 'fee_receipt', label: 'Paid Bank Challan' }
-              ].map(doc => (
+              {REQUIRED_DOCUMENTS.map((doc) => (
                 <Card key={doc.key} className="border-l-4 border-l-primary/30">
                   <CardContent className="p-4 flex items-center justify-between">
                     <div>
                       <p className="font-medium text-sm">{doc.label}</p>
-                      <p className="text-[10px] text-muted-foreground">PDF, JPG (Max 5MB)</p>
+                      <p className="text-[10px] text-muted-foreground">
+                        {selectedFiles[doc.key]?.name ?? 'PDF, JPG, PNG (Max 5MB)'}
+                      </p>
                     </div>
-                    <Button variant="outline" size="sm" className="pill-button h-8 border-primary text-primary text-xs">
+                    <Input
+                      id={doc.key}
+                      type="file"
+                      accept=".pdf,.jpg,.jpeg,.png"
+                      className="hidden"
+                      onChange={(event) => {
+                        const file = event.target.files?.[0] ?? null;
+                        handleDocumentChange(doc.key, file);
+                      }}
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="pill-button h-8 border-primary text-primary text-xs"
+                      onClick={() => document.getElementById(doc.key)?.click()}
+                    >
                       <Upload className="w-3 h-3 mr-2" /> Upload
                     </Button>
                   </CardContent>
                 </Card>
               ))}
             </div>
+            <p className="text-xs text-muted-foreground">Exactly 2 documents are required.</p>
+            {errors.document_urls && <p className="text-destructive text-xs">{errors.document_urls.message}</p>}
           </div>
         );
       case 4:
@@ -365,7 +592,7 @@ export default function ApplyPage() {
         <Card className="step-card">
           <div className="botanical-bg" />
           <CardContent className="p-8 pt-10">
-            <form onSubmit={handleSubmit(onSubmit)}>
+            <form onSubmit={handleSubmit(onSubmit, onInvalidSubmit)}>
               {renderStep()}
 
               <div className="flex justify-between items-center mt-12 pt-8 border-t">
@@ -398,6 +625,11 @@ export default function ApplyPage() {
                   </Button>
                 )}
               </div>
+              {submitMessage ? (
+                <p className={cn('mt-4 text-xs', submitError ? 'text-destructive' : 'text-muted-foreground')}>
+                  {submitMessage}
+                </p>
+              ) : null}
             </form>
           </CardContent>
         </Card>

@@ -1,5 +1,6 @@
 import type {Metadata} from 'next';
 import './globals.css';
+import { Toaster } from '@/components/ui/toaster';
 
 export const metadata: Metadata = {
   title: 'Verdant Admissions | Greenfield University',
@@ -20,6 +21,7 @@ export default function RootLayout({
       </head>
       <body className="font-body antialiased min-h-screen bg-background">
         {children}
+        <Toaster />
       </body>
     </html>
   );

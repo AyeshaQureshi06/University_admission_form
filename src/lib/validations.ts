@@ -39,13 +39,7 @@ export const programSchema = z.object({
 });
 
 export const documentsSchema = z.object({
-  cnic_copy: z.string().min(1, 'Required'),
-  matric_cert: z.string().min(1, 'Required'),
-  inter_cert: z.string().min(1, 'Required'),
-  domicile: z.string().min(1, 'Required'),
-  photos: z.string().min(1, 'Required'),
-  fee_receipt: z.string().min(1, 'Required'),
-  character_cert: z.string().optional(),
+  document_urls: z.array(z.string().min(1)).max(2, 'Only 2 documents are allowed').optional(),
 });
 
 export const declarationSchema = z.object({
