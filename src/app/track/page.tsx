@@ -1,11 +1,11 @@
 "use client"
 
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Search, Loader2, CheckCircle2, Clock, FileText, AlertCircle } from 'lucide-react';
+import { Search, Loader2, CheckCircle2, Clock, FileText } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export default function TrackPage() {
@@ -123,7 +123,7 @@ export default function TrackPage() {
                 <p>Waiting for search query...</p>
               </div>
             )}
-          </div>
+          </CardContent>
         </Card>
       </main>
     </div>
