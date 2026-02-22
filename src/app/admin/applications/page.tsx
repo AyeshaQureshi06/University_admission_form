@@ -28,6 +28,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import Link from 'next/link';
+import { cn } from '@/lib/utils';
 
 const MOCK_APPLICATIONS = [
   { id: '1', appId: 'GU-2025-4122', name: 'Zainab Fatima', program: 'BS CS', faculty: 'Computing', status: 'Under Review', date: '2024-10-20' },
@@ -136,8 +137,4 @@ export default function ApplicationsPage() {
       </Card>
     </div>
   );
-}
-
-function cn(...inputs: any[]) {
-  return inputs.filter(Boolean).join(' ');
 }

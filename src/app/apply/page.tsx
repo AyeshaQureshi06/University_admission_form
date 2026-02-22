@@ -16,6 +16,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
 import { generateAppId } from '@/lib/generate-app-id';
 import { GraduationCap, Camera, Upload, ArrowRight, ArrowLeft } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 const TOTAL_STEPS = 5;
 

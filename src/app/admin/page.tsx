@@ -23,6 +23,9 @@ import {
   Cell,
   Legend
 } from 'recharts';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 
 const stats = [
   { label: 'Total Applications', value: '1,284', icon: FileText, color: 'text-primary', bg: 'bg-primary/10', trend: '+12%' },
@@ -164,8 +167,4 @@ export default function AdminDashboard() {
       </Card>
     </div>
   );
-}
-
-function cn(...inputs: any[]) {
-  return inputs.filter(Boolean).join(' ');
 }
