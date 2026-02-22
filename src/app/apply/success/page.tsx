@@ -4,12 +4,25 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { CheckCircle2, Download, Home } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 
 export default function SuccessPage() {
+  return (
+    <Suspense fallback={<SuccessContent appId="GU-2025-XXXX" />}>
+      <SuccessContentWithParams />
+    </Suspense>
+  );
+}
+
+function SuccessContentWithParams() {
   const searchParams = useSearchParams();
-  const router = useRouter();
   const appId = searchParams.get('id') || 'GU-2025-XXXX';
+
+  return <SuccessContent appId={appId} />;
+}
+
+function SuccessContent({ appId }: { appId: string }) {
+  const router = useRouter();
   const [showConfetti, setShowConfetti] = useState(false);
 
   useEffect(() => {
